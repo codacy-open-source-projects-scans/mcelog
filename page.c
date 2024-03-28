@@ -18,10 +18,7 @@
 
 /* NB 
    investigate other data structures. Primary consideration would 
-   be space efficiency. rbtree nodes are rather large. 
-
-   Do we need aging? Right now the only way to get rid of old nodes
-   is to restart. */
+   be space efficiency. rbtree nodes are rather large.  */
 #define _GNU_SOURCE 1 
 #include <stdlib.h>
 #include <stdio.h>
@@ -103,13 +100,20 @@ static struct mempage *mempage_alloc(void)
 
 static struct mempage *mempage_replace(void)
 {
+	struct mempage *mp;
+
 	/* If no free mp_cluster, reuse the last mp_cluster of the LRU list  */
 	if (mp_cluster->mp_used == N) {
 		mp_cluster = list_last_entry(&mempage_cluster_lru_list, struct mempage_cluster, lru);
 		mp_cluster->mp_used = 0;
 	}
 
-	return &mp_cluster->mp[mp_cluster->mp_used++];
+	mp = &mp_cluster->mp[mp_cluster->mp_used++];
+	mp->offlined = PAGE_ONLINE;
+	mp->triggered = 0;
+	mp->ce.count = 0;
+
+	return mp;
 }
 
 static struct mempage *mempage_lookup(u64 addr)
@@ -128,6 +132,9 @@ static struct mempage *mempage_lookup(u64 addr)
 	}
 	return NULL;
 }
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Waddress-of-packed-member"
 
 static struct mempage *
 mempage_insert_lookup(u64 addr, struct rb_node * node)
@@ -151,6 +158,8 @@ mempage_insert_lookup(u64 addr, struct rb_node * node)
 	rb_insert_color(node, &mempage_root);
 	return NULL;
 }
+
+#pragma GCC diagnostic pop
 
 static struct mempage *mempage_insert(u64 addr, struct mempage *mp)
 {
