@@ -64,6 +64,14 @@ enum cputype select_intel_cputype(int family, int model)
 			return CPU_INTEL; 
 		}
 	}
+	if (family > 0xf) {
+		ret = lookup_intel_cputype((family << 8) | model);
+		if (ret != -1)
+			return ret;
+		Eprintf("Family %u Model %u CPU: only decoding architectural errors\n",
+			family, model);
+		return CPU_INTEL;
+	}
 	if (family > 6) { 
 		Eprintf("Family %u Model %u CPU: only decoding architectural errors\n",
 				family, model);
@@ -114,6 +122,7 @@ static int intel_memory_error(struct mce *m, unsigned recordlen)
 			break;
 		case CPU_GRANITERAPIDS:
 		case CPU_SIERRAFOREST:
+		case CPU_CLEARWATERFOREST:
 			granite_memerr_misc(m, channel, dimm);
 			break;
 		default:
