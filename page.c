@@ -41,14 +41,16 @@
 
 #define PAGE_SHIFT 12
 #define PAGE_SIZE (1UL << PAGE_SHIFT)
+#define OFFLINE_RETRY_EXP_BACKOFF 2
+#define NO_OFFLINE_RETRY 1
 
 enum { PAGE_ONLINE = 0, PAGE_OFFLINE = 1, PAGE_OFFLINE_FAILED = 2 };
 
 struct mempage { 
 	struct rb_node nd;
-	/* one char used by rb_node */
 	char offlined;
 	char triggered;
+	unsigned char offline_threshold_multiplier;
 	// 1(32bit)-5(64bit) bytes of padding to play with here
 	u64 addr;
 	struct err_type ce;
@@ -74,12 +76,13 @@ enum {
 
 static int corr_err_counters;
 static struct mempage_cluster *mp_cluster;
-static struct mempage_replacement mp_repalcement;
+static struct mempage_replacement mp_replacement;
 static struct rb_root mempage_root;
 static LIST_HEAD(mempage_cluster_lru_list);
 static struct bucket_conf page_trigger_conf;
 static struct bucket_conf mp_replacement_trigger_conf;
 static char *page_error_pre_soft_trigger, *page_error_post_soft_trigger;
+static unsigned offline_retry_backoff_base = NO_OFFLINE_RETRY;
 
 static const char *page_state[] = {
 	[PAGE_ONLINE] = "online",
@@ -111,6 +114,7 @@ static struct mempage *mempage_replace(void)
 	mp = &mp_cluster->mp[mp_cluster->mp_used++];
 	mp->offlined = PAGE_ONLINE;
 	mp->triggered = 0;
+	mp->offline_threshold_multiplier = NO_OFFLINE_RETRY;
 	mp->ce.count = 0;
 
 	return mp;
@@ -241,6 +245,7 @@ static void offline_action(struct mempage *mp, u64 addr)
 	if (memory_offline(addr) < 0) {
 		Lprintf("Offlining page %llx failed: %s\n", addr, strerror(errno));
 		mp->offlined = PAGE_OFFLINE_FAILED;
+		mp->offline_threshold_multiplier *= offline_retry_backoff_base;
 	} else
 		mp->offlined = PAGE_OFFLINE;
 }
@@ -323,6 +328,7 @@ void account_page_error(struct mce *m, int channel, int dimm)
 		bucket_init(&mp->ce.bucket);
 	        mempage_insert(addr, mp);
 		mempage_cluster_lru_list_insert(to_cluster(mp));
+		mp->offline_threshold_multiplier = NO_OFFLINE_RETRY;
 		corr_err_counters++;
 	} else if (!mp) {
 		mp = mempage_replace();
@@ -331,14 +337,14 @@ void account_page_error(struct mce *m, int channel, int dimm)
 		mempage_cluster_lru_list_update(to_cluster(mp));
 
 		/* Report how often the replacement of counter 'mp' happened */
-		++mp_repalcement.count;
-		if (__bucket_account(&mp_replacement_trigger_conf, &mp_repalcement.bucket, 1, t)) {
-			thresh = bucket_output(&mp_replacement_trigger_conf, &mp_repalcement.bucket);
+		++mp_replacement.count;
+		if (__bucket_account(&mp_replacement_trigger_conf, &mp_replacement.bucket, 1, t, 1)) {
+			thresh = bucket_output(&mp_replacement_trigger_conf, &mp_replacement.bucket);
 			xasprintf(&msg, "Replacements of page correctable error counter exceed threshold %s", thresh);
 			free(thresh);
 			thresh = NULL;
 
-			counter_trigger(msg, t, &mp_repalcement, &mp_replacement_trigger_conf, false);
+			counter_trigger(msg, t, &mp_replacement, &mp_replacement_trigger_conf, false);
 			free(msg);
 			msg = NULL;
 		}
@@ -346,10 +352,11 @@ void account_page_error(struct mce *m, int channel, int dimm)
 		mempage_cluster_lru_list_update(to_cluster(mp));
 	}
 	++mp->ce.count;
-	if (__bucket_account(&page_trigger_conf, &mp->ce.bucket, 1, t)) { 
+	if (__bucket_account(&page_trigger_conf, &mp->ce.bucket, 1, t, mp->offline_threshold_multiplier)) {
 		struct memdimm *md;
 
-		if (mp->offlined != PAGE_ONLINE)
+		if ((offline_retry_backoff_base == OFFLINE_RETRY_EXP_BACKOFF && mp->offlined == PAGE_OFFLINE) ||
+		    (offline_retry_backoff_base == NO_OFFLINE_RETRY && mp->offlined != PAGE_ONLINE))
 			return;
 		/* Only do triggers and messages for online pages */
 		thresh = bucket_output(&page_trigger_conf, &mp->ce.bucket);
@@ -432,6 +439,8 @@ void page_setup(void)
 	
 	config_trigger("page", "memory-ce", &page_trigger_conf);
 	config_trigger("page", "memory-ce-counter-replacement", &mp_replacement_trigger_conf);
+	if (config_bool("page", "memory-ce-offline-retry") == 1)
+		offline_retry_backoff_base = OFFLINE_RETRY_EXP_BACKOFF;
 	n = config_choice("page", "memory-ce-action", offline_choice);
 	if (n >= 0)
 		offline = n;
@@ -461,5 +470,5 @@ void page_setup(void)
 	if (n != max_corr_err_counters)
 		Lprintf("Round up max-corr-err-counters from %d to %d\n", n, max_corr_err_counters);
 
-	bucket_init(&mp_repalcement.bucket);
+	bucket_init(&mp_replacement.bucket);
 }
