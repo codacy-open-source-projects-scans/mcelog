@@ -15,9 +15,25 @@
 # this can be changed in mcelog.conf
 
 #
+# Change "DO_OFFLINE" to "1" if you want to
 # offline the CPUs sharing the affected cache
 #
+DO_OFFLINE=0
+
 EXIT=0
+
+logger -s -p daemon.crit -t mcelog "Level $LEVEL cache error threshold affects CPUs: $AFFECTED_CPUS"
+
+if [ $DO_OFFLINE = 0 ]
+then
+	exit $EXIT
+fi
+
+if [ $(echo $AFFECTED_CPUS | wc -w) -ge $(grep -c ^processor /proc/cpuinfo) ]
+then
+	logger -s -p daemon.crit -t mcelog "Too many CPUs affected by cache error threshold to offline"
+	exit $EXIT
+fi
 
 for i in $AFFECTED_CPUS ; do
 	logger -s -p daemon.crit -t mcelog "Offlining CPU $i due to cache error threshold"
