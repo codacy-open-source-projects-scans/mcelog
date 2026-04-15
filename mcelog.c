@@ -756,6 +756,12 @@ restart:
 			else
 				FIELD(socketid);
 		} 
+		else if (!strncmp(s, "SOCKET", 6)) {
+			if ((n = sscanf(s, "SOCKET %u%n", &m.socketid, &next)) != 1)
+				missing++;
+			else
+				FIELD(socketid);
+		}
 		else if (!strncmp(s, "CPUID", 5)) {
 			unsigned fam, mod;
 			char vendor[31];
@@ -791,6 +797,12 @@ restart:
 				if (n >= 3)
 					FIELD(addr);
 			}
+		}
+		else if (!strncmp(s, "PPIN", 4)) {
+			if ((n = sscanf(s, "PPIN %llx%n", &m.ppin, &next)) < 1)
+				missing++;
+			else
+				FIELD(ppin);
 		}
 		else if (!match_patterns(s, skip_patterns))
 			n = 0;
