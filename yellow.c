@@ -87,7 +87,10 @@ void run_yellow_trigger(int cpu, int tnum, int lnum, char *ts, char *ls, int soc
 		xasprintf(&env[ei++], "SOCKETID=%d", socket);
 	xasprintf(&env[ei++], "MESSAGE=%s", msg);
 	xasprintf(&env[ei++], "CPU=%d", cpu);
-	xasprintf(&env[ei++], "LEVEL=%d", lnum);
+	if (lnum <= 3)
+		xasprintf(&env[ei++], "LEVEL=%d", lnum);
+	else
+		xasprintf(&env[ei++], "LEVEL=Generic");
 	xasprintf(&env[ei++], "TYPE=%s", ts);
 	if (cache_to_cpus(cpu, lnum, tnum, &cpumasklen, &cpumask) >= 0)
 		env[ei++] = cpulist("AFFECTED_CPUS=", cpumask, cpumasklen); 
